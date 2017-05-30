@@ -23,12 +23,36 @@ func (c *Client) w(s string) {
 	c.bufout.WriteString(s + "\r\n")
 	c.bufout.Flush()
 }
-func (c *Client) r(g *Glutton) string {
+func (c *Client) r(g *Glutton) (string, error) {
 	reply, err := c.bufin.ReadString('\n')
 	if err != nil {
 		g.logger.Errorf("[smpt    ] %v", err)
+		return "", err
 	}
-	return reply
+	return reply, nil
+}
+
+func rwait() {
+	// makes the process sleep for random time
+	rand.Seed(time.Now().Unix())
+	// between 0.5 - 1.5 seconds
+	rtime := rand.Intn(1500) + 500
+	duration := time.Duration(rtime) * time.Millisecond
+	time.Sleep(duration)
+}
+func validateMail(query string) bool {
+	email := regexp.MustCompile("^MAIL FROM:<.+@.+>$") // naive regex
+	if email.MatchString(query) {
+		return true
+	}
+	return false
+}
+func validateRCPT(query string) bool {
+	rcpt := regexp.MustCompile("^RCPT TO:<.+@.+>$")
+	if rcpt.MatchString(query) {
+		return true
+	}
+	return false
 }
 
 func rwait() {
@@ -65,7 +89,11 @@ func (g *Glutton) HandleSMTP(conn net.Conn) {
 	rwait()
 	client.w("220 Welcome!")
 	for {
-		query := strings.Trim(client.r(g), "\r\n")
+		msg, err := client.r(g)
+		if err != nil {
+			break
+		}
+		query := strings.Trim(msg, "\r\n")
 		g.logger.Infof("[smtp    ] Payload : %q", query)
 		if strings.HasPrefix(query, "HELO ") {
 			rwait()
@@ -78,8 +106,11 @@ func (g *Glutton) HandleSMTP(conn net.Conn) {
 			client.w("250 OK")
 		} else if strings.Compare(query, "DATA") == 0 {
 			client.w("354 End data with <CRLF>.<CRLF>")
-			for readctr := maxDataRead; readctr >= 0; readctr -= 1 {
-				data := client.r(g)
+			for readctr := maxDataRead; readctr >= 0; readctr-- {
+				data, err := client.r(g)
+				if err != nil {
+					break
+				}
 				g.logger.Infof("[smtp    ] Data : %q", data)
 				// exit condition
 				if strings.Compare(data, ".\r\n") == 0 {

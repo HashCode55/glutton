@@ -75,6 +75,8 @@ func (g *Glutton) Init() (err error) {
 	// TODO: in Freki updated version
 	// g.processor.GetPublicAddresses()
 
+	g.startMonitor()
+
 	g.mapProtocolHandlers()
 	g.registerHandlers()
 	err = g.processor.Init()
@@ -87,6 +89,7 @@ func (g *Glutton) Init() (err error) {
 
 // Start the packet processor
 func (g *Glutton) Start() (err error) {
+	defer g.Shutdown()
 	err = g.processor.Start()
 	return
 }
@@ -139,12 +142,17 @@ func (g *Glutton) registerHandlers() {
 				}
 			}
 			g.processor.RegisterConnHandler(protocol, func(conn net.Conn, md *freki.Metadata) error {
+				defer func() {
+					if conn != nil {
+						conn.Close()
+					}
+				}()
 
 				host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
 				if err != nil {
-					g.logger.Error(err)
-					return nil
+					return err
 				}
+
 				if md == nil {
 					g.logger.Debugf("[glutton ] connection not tracked: %s:%s", host, port)
 					return nil
@@ -153,11 +161,11 @@ func (g *Glutton) registerHandlers() {
 
 				err = g.producer.LogHTTP(conn, md, nil, "")
 				if err != nil {
-					g.logger.Error(err)
+					g.logger.Errorf("[glutton ] %v", err)
 				}
 
-				protocolHandler := g.protocolHandlers[protocol]
-				go protocolHandler(conn)
+				// TODO: modify handlers to return an error
+				g.protocolHandlers[protocol](conn)
 				return nil
 			})
 		}
